@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Groq Speech-to-Text</title>
+  <style>
+    :root {
+      --bg: #eef3f8;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #0ea5e9;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --border: #cbd5e1;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #dbeafe, var(--bg) 38%);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 20px 14px 40px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 24px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-header h2 {
+      margin: 0;
+    }
+
+    .key-summary {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .key-settings-content {
+      margin-top: 10px;
+    }
+
+    .key-settings-content.collapsed {
+      display: none;
+    }
+
+    .btn-ghost {
+      background: #f1f5f9;
+      color: #0f172a;
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .field {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    input[type="password"], textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      color: var(--text);
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 130px;
+      resize: vertical;
+      margin-top: 10px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      margin: 18px 0;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .record-btn,
+    .upload-btn {
+      width: 82px;
+      height: 82px;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 16px;
+      box-shadow: 0 6px 15px rgba(15, 23, 42, 0.2);
+      transition: transform 0.15s;
+    }
+
+    .record-btn {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+    }
+
+    .upload-btn {
+      background: linear-gradient(135deg, #0284c7, #075985);
+      font-size: 28px;
+    }
+
+    .record-btn:active,
+    .upload-btn:active {
+      transform: scale(0.96);
+    }
+
+    .recording {
+      animation: pulse 1.4s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+      70% { box-shadow: 0 0 0 18px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
+    .status {
+      min-height: 22px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    #audioFileInput {
+      display: none;
+    }
+
+    @media (max-width: 720px) {
+      h1 {
+        font-size: 21px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Speech-to-Text mit Groq</h1>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Groq API Key</h2>
+        <button id="toggleKeyPanelBtn" class="btn-ghost">Einstellungen</button>
+      </div>
+      <div id="keySummary" class="key-summary"></div>
+      <div id="keySettingsContent" class="key-settings-content">
+        <p>Der Key wird nur lokal im Browser gespeichert (LocalStorage).</p>
+        <div class="field">
+          <input id="groqApiKey" type="password" placeholder="gsk_..." autocomplete="off">
+          <button id="saveKeyBtn" class="btn-primary">Key speichern</button>
+          <button id="clearKeyBtn" class="btn-secondary">Key entfernen</button>
+        </div>
+      </div>
+      <div id="keyStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Sprache zu Text</h2>
+      <div class="actions">
+        <button id="recordButton" class="record-btn">REC</button>
+        <button id="uploadButton" class="upload-btn">📁</button>
+      </div>
+      <input type="file" id="audioFileInput" accept="audio/*">
+      <div id="sttStatus" class="status">Bereit</div>
+      <textarea id="sttResult" placeholder="Transkription erscheint hier..."></textarea>
+      <div class="field">
+        <button id="copyBtn" class="btn-secondary">Text kopieren</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "groqApiKey";
+
+    const keyInput = document.getElementById("groqApiKey");
+    const saveKeyBtn = document.getElementById("saveKeyBtn");
+    const clearKeyBtn = document.getElementById("clearKeyBtn");
+    const toggleKeyPanelBtn = document.getElementById("toggleKeyPanelBtn");
+    const keySettingsContent = document.getElementById("keySettingsContent");
+    const keySummary = document.getElementById("keySummary");
+    const keyStatus = document.getElementById("keyStatus");
+
+    const sttStatus = document.getElementById("sttStatus");
+    const sttResult = document.getElementById("sttResult");
+    const copyBtn = document.getElementById("copyBtn");
+
+    const recordBtn = document.getElementById("recordButton");
+    const uploadBtn = document.getElementById("uploadButton");
+    const audioFileInput = document.getElementById("audioFileInput");
+
+    let mediaRecorder;
+    let chunks = [];
+    let audioStream;
+
+    function getSavedApiKey() {
+      return localStorage.getItem(STORAGE_KEY) || "";
+    }
+
+    function setKeyMessage(message, cssClass) {
+      keyStatus.textContent = message;
+      keyStatus.className = `status ${cssClass || ""}`;
+    }
+
+    function setKeyPanelCollapsed(collapsed) {
+      keySettingsContent.classList.toggle("collapsed", collapsed);
+      toggleKeyPanelBtn.textContent = collapsed ? "Einstellungen" : "Zuklappen";
+    }
+
+    function setKeySummary(hasKey) {
+      keySummary.textContent = hasKey
+        ? "API Key vorhanden. Bereich ist minimiert."
+        : "Kein API Key vorhanden. Bitte Einstellungen ausfuellen.";
+      keySummary.className = `key-summary ${hasKey ? "ok" : "error"}`;
+    }
+
+    function updateKeyState() {
+      const apiKey = getSavedApiKey();
+      if (!apiKey) {
+        setKeyMessage("Kein Groq API Key gespeichert. Bitte zuerst hinterlegen.", "error");
+        setKeySummary(false);
+        setKeyPanelCollapsed(false);
+        return false;
+      }
+      setKeyMessage("API Key gespeichert.", "ok");
+      setKeySummary(true);
+      setKeyPanelCollapsed(true);
+      return true;
+    }
+
+    toggleKeyPanelBtn.addEventListener("click", () => {
+      const isCollapsed = keySettingsContent.classList.contains("collapsed");
+      setKeyPanelCollapsed(!isCollapsed);
+    });
+
+    saveKeyBtn.addEventListener("click", () => {
+      const value = keyInput.value.trim();
+      if (!value) {
+        localStorage.removeItem(STORAGE_KEY);
+        updateKeyState();
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, value);
+      keyInput.value = "";
+      updateKeyState();
+    });
+
+    clearKeyBtn.addEventListener("click", () => {
+      localStorage.removeItem(STORAGE_KEY);
+      keyInput.value = "";
+      updateKeyState();
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      if (!sttResult.value) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(sttResult.value);
+        sttStatus.textContent = "Text kopiert.";
+      } catch {
+        sttStatus.textContent = "Kopieren fehlgeschlagen.";
+      }
+    });
+
+    sttResult.addEventListener("click", () => sttResult.select());
+
+    uploadBtn.addEventListener("click", () => {
+      audioFileInput.click();
+    });
+
+    audioFileInput.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) {
+        return;
+      }
+      try {
+        await transcribeFile(file);
+      } finally {
+        audioFileInput.value = "";
+      }
+    });
+
+    recordBtn.addEventListener("click", async () => {
+      if (recordBtn.classList.contains("recording")) {
+        mediaRecorder.stop();
+        return;
+      }
+
+      if (!updateKeyState()) {
+        sttStatus.textContent = "Fehler: Kein API Key vorhanden.";
+        sttStatus.className = "status error";
+        return;
+      }
+
+      try {
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        sttStatus.textContent = "Mikrofonzugriff verweigert.";
+        sttStatus.className = "status error";
+        return;
+      }
+
+      chunks = [];
+      mediaRecorder = new MediaRecorder(audioStream);
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+
+      mediaRecorder.onstop = async () => {
+        recordBtn.classList.remove("recording");
+        audioStream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        await transcribeBlob(blob, "recording.webm");
+      };
+
+      mediaRecorder.start();
+      recordBtn.classList.add("recording");
+      sttStatus.textContent = "Aufnahme...";
+      sttStatus.className = "status";
+    });
+
+    async function transcribeFile(file) {
+      await transcribeBlob(file, file.name || "upload.webm");
+    }
+
+    async function transcribeBlob(blobOrFile, fileName) {
+      if (!updateKeyState()) {
+        sttStatus.textContent = "Fehler: Kein API Key vorhanden.";
+        sttStatus.className = "status error";
+        return;
+      }
+
+      sttStatus.textContent = "Transkribiere...";
+      sttStatus.className = "status";
+
+      try {
+        const formData = new FormData();
+        formData.append("file", blobOrFile, fileName);
+
+        const response = await fetch("/api/transcriptions", {
+          method: "POST",
+          headers: {
+            "X-Groq-Api-Key": getSavedApiKey()
+          },
+          body: formData
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          const message = payload.error || "Transkription fehlgeschlagen.";
+          throw new Error(message);
+        }
+
+        sttResult.value = payload.text || "";
+        sttStatus.textContent = "Fertig.";
+        sttStatus.className = "status ok";
+      } catch (error) {
+        sttStatus.textContent = `Fehler: ${error.message}`;
+        sttStatus.className = "status error";
+      }
+    }
+
+    updateKeyState();
+  </script>
+</body>
+</html>
