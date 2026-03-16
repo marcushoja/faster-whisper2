@@ -136,6 +136,4 @@ docker run --rm -p 8080:8080 faster-whisper2
 - Sehr lange Transkriptionen koennen je nach Tarif/Modell in Groq Rate-Limits laufen.
 - Fuer Produktion sind zusaetzliche Schutzmechanismen sinnvoll (Auth, API Rate-Limit, Monitoring, Logging).
 
-## Lizenz
 
-Derzeit ist keine `LICENSE` enthalten. Fuer ein oeffentliches Repository solltest du eine passende Lizenzdatei ergaenzen.
