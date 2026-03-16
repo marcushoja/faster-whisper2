@@ -13,6 +13,7 @@
       --primary: #0ea5e9;
       --danger: #dc2626;
       --ok: #16a34a;
+      --warn: #b45309;
       --border: #cbd5e1;
     }
 
@@ -25,13 +26,17 @@
       margin: 0;
       color: var(--text);
       background: radial-gradient(circle at top left, #dbeafe, var(--bg) 38%);
-      min-height: 100vh;
+      min-height: 100dvh;
     }
 
     .container {
+      display: flex;
+      flex-direction: column;
       max-width: 920px;
       margin: 0 auto;
-      padding: 20px 14px 40px;
+      min-height: 100dvh;
+      padding: 20px 14px max(16px, env(safe-area-inset-bottom));
+      gap: 14px;
     }
 
     .card {
@@ -40,12 +45,18 @@
       border-radius: 14px;
       padding: 16px;
       box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
-      margin-bottom: 14px;
     }
 
     h1 {
-      margin: 0 0 14px;
+      margin: 0;
       font-size: 24px;
+    }
+
+    .stt-card {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
     }
 
     h2 {
@@ -110,8 +121,14 @@
 
     textarea {
       min-height: 130px;
-      resize: vertical;
+      resize: none;
       margin-top: 10px;
+    }
+
+    #sttResult {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
     }
 
     .actions {
@@ -191,13 +208,27 @@
       color: var(--ok);
     }
 
+    .warn {
+      color: var(--warn);
+    }
+
     #audioFileInput {
       display: none;
+    }
+
+    .stt-bottom-actions {
+      margin-top: 10px;
+      margin-bottom: 0;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
     }
 
     @media (max-width: 720px) {
       h1 {
         font-size: 21px;
+      }
+
+      .stt-bottom-actions button {
+        flex: 1 1 100%;
       }
     }
   </style>
@@ -223,7 +254,7 @@
       <div id="keyStatus" class="status"></div>
     </section>
 
-    <section class="card">
+    <section class="card stt-card">
       <h2>Sprache zu Text</h2>
       <div class="actions">
         <button id="recordButton" class="record-btn">REC</button>
@@ -232,8 +263,9 @@
       <input type="file" id="audioFileInput" accept="audio/*">
       <div id="sttStatus" class="status">Bereit</div>
       <textarea id="sttResult" placeholder="Transkription erscheint hier..."></textarea>
-      <div class="field">
+      <div class="field stt-bottom-actions">
         <button id="copyBtn" class="btn-secondary">Text kopieren</button>
+        <button id="downloadBtn" class="btn-secondary">Als Datei downloaden</button>
       </div>
     </section>
   </main>
@@ -252,6 +284,7 @@
     const sttStatus = document.getElementById("sttStatus");
     const sttResult = document.getElementById("sttResult");
     const copyBtn = document.getElementById("copyBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
 
     const recordBtn = document.getElementById("recordButton");
     const uploadBtn = document.getElementById("uploadButton");
@@ -319,16 +352,119 @@
       updateKeyState();
     });
 
-    copyBtn.addEventListener("click", async () => {
-      if (!sttResult.value) {
-        return;
+    function copyWithExecCommand(text) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      area.style.pointerEvents = "none";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+
+      document.body.removeChild(area);
+      return copied;
+    }
+
+    async function verifyClipboardText(expectedText) {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        return null;
       }
       try {
-        await navigator.clipboard.writeText(sttResult.value);
-        sttStatus.textContent = "Text kopiert.";
+        const clipboardText = await navigator.clipboard.readText();
+        return clipboardText === expectedText;
       } catch {
-        sttStatus.textContent = "Kopieren fehlgeschlagen.";
+        return null;
       }
+    }
+
+    async function copyTextRobust(text) {
+      let attemptedClipboardApi = false;
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          attemptedClipboardApi = true;
+          await navigator.clipboard.writeText(text);
+
+          const verified = await verifyClipboardText(text);
+          if (verified === true || verified === null) {
+            return { success: true, verified };
+          }
+        } catch {
+        }
+      }
+
+      const fallbackCopied = copyWithExecCommand(text);
+      if (!fallbackCopied) {
+        return { success: false, verified: false };
+      }
+
+      const fallbackVerified = await verifyClipboardText(text);
+      if (fallbackVerified === false && attemptedClipboardApi) {
+        return { success: true, verified: false };
+      }
+
+      return { success: true, verified: fallbackVerified };
+    }
+
+    copyBtn.addEventListener("click", async () => {
+      const text = sttResult.value;
+      if (!text) {
+        return;
+      }
+
+      const copyResult = await copyTextRobust(text);
+      if (!copyResult.success) {
+        sttStatus.textContent = "Kopieren fehlgeschlagen.";
+        sttStatus.className = "status error";
+        return;
+      }
+
+      if (copyResult.verified === true) {
+        sttStatus.textContent = "Text vollstaendig kopiert.";
+        sttStatus.className = "status ok";
+        return;
+      }
+
+      if (copyResult.verified === false) {
+        sttStatus.textContent = "Warnung: Zwischenablage wirkt gekuerzt. Bitte 'Als Datei downloaden' nutzen.";
+        sttStatus.className = "status warn";
+        return;
+      }
+
+      sttStatus.textContent = "Text kopiert. Vollstaendigkeit konnte nicht geprueft werden. Bei Problemen bitte Datei-Download nutzen.";
+      sttStatus.className = "status warn";
+    });
+
+    downloadBtn.addEventListener("click", () => {
+      const text = sttResult.value;
+      if (!text) {
+        return;
+      }
+
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+      link.href = url;
+      link.download = `transkription-${timestamp}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
+      sttStatus.textContent = "Textdatei heruntergeladen.";
+      sttStatus.className = "status ok";
     });
 
     sttResult.addEventListener("click", () => sttResult.select());
