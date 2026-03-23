@@ -502,20 +502,12 @@
       return new Date().toISOString().replace(/[:.]/g, "-");
     }
 
-    function getAudioExtensionFromNameOrType(fileName, blobOrFile) {
-      if (fileName && fileName.includes(".")) {
-        return fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+    function getFileExtensionFromName(fileName) {
+      if (!fileName || !fileName.includes(".")) {
+        return "";
       }
 
-      const extensionByMime = {
-        "audio/mpeg": ".mp3",
-        "audio/wav": ".wav",
-        "audio/webm": ".webm",
-        "audio/ogg": ".ogg",
-        "audio/mp4": ".m4a"
-      };
-
-      return extensionByMime[blobOrFile.type] || ".webm";
+      return fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
     }
 
     function sanitizeFileBaseName(name) {
@@ -528,16 +520,105 @@
         .toLowerCase() || "audio";
     }
 
-    function buildAudioDownloadFileName(fileName, blobOrFile) {
+    function buildAudioDownloadFileName(fileName, targetExtension) {
       const timestamp = createTimestampPart();
-      const extension = getAudioExtensionFromNameOrType(fileName, blobOrFile);
       const baseName = sanitizeFileBaseName(fileName || "audio");
 
       if (baseName === "recording" || baseName === "aufnahme") {
-        return `aufnahme-${timestamp}${extension}`;
+        return `aufnahme-${timestamp}${targetExtension}`;
       }
 
-      return `${baseName}-${timestamp}${extension}`;
+      return `${baseName}-${timestamp}${targetExtension}`;
+    }
+
+    function audioBufferToWavBlob(audioBuffer) {
+      const channelCount = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const frameCount = audioBuffer.length;
+      const bytesPerSample = 2;
+      const blockAlign = channelCount * bytesPerSample;
+      const dataSize = frameCount * blockAlign;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      function writeAscii(offset, value) {
+        for (let i = 0; i < value.length; i += 1) {
+          view.setUint8(offset + i, value.charCodeAt(i));
+        }
+      }
+
+      writeAscii(0, "RIFF");
+      view.setUint32(4, 36 + dataSize, true);
+      writeAscii(8, "WAVE");
+      writeAscii(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, channelCount, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * blockAlign, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bytesPerSample * 8, true);
+      writeAscii(36, "data");
+      view.setUint32(40, dataSize, true);
+
+      const channelData = [];
+      for (let channel = 0; channel < channelCount; channel += 1) {
+        channelData.push(audioBuffer.getChannelData(channel));
+      }
+
+      let offset = 44;
+      for (let frame = 0; frame < frameCount; frame += 1) {
+        for (let channel = 0; channel < channelCount; channel += 1) {
+          const sample = Math.max(-1, Math.min(1, channelData[channel][frame]));
+          const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+          view.setInt16(offset, intSample, true);
+          offset += bytesPerSample;
+        }
+      }
+
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    async function convertAudioBlobToWav(blobOrFile) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        return null;
+      }
+
+      const audioContext = new AudioContextClass();
+      try {
+        const inputBuffer = await blobOrFile.arrayBuffer();
+        const decoded = await audioContext.decodeAudioData(inputBuffer.slice(0));
+        return audioBufferToWavBlob(decoded);
+      } catch {
+        return null;
+      } finally {
+        await audioContext.close();
+      }
+    }
+
+    async function prepareAudioDownload(blobOrFile, sourceName) {
+      const sourceExtension = getFileExtensionFromName(sourceName);
+      const isMp3 = blobOrFile.type === "audio/mpeg" || sourceExtension === ".mp3";
+
+      if (isMp3) {
+        return {
+          blob: blobOrFile,
+          extension: ".mp3",
+          formatLabel: "MP3"
+        };
+      }
+
+      const wavBlob = await convertAudioBlobToWav(blobOrFile);
+      if (wavBlob) {
+        return {
+          blob: wavBlob,
+          extension: ".wav",
+          formatLabel: "WAV"
+        };
+      }
+
+      return null;
     }
 
     function triggerDownload(blob, fileName) {
@@ -580,16 +661,26 @@
       sttStatus.className = "status warn";
     });
 
-    downloadAudioBtn.addEventListener("click", () => {
+    downloadAudioBtn.addEventListener("click", async () => {
       if (!lastAudioBlob) {
         sttStatus.textContent = "Kein Audio verfuegbar. Bitte erst aufnehmen oder Datei hochladen.";
         sttStatus.className = "status warn";
         return;
       }
 
-      const downloadFileName = buildAudioDownloadFileName(lastAudioSourceName, lastAudioBlob);
-      triggerDownload(lastAudioBlob, downloadFileName);
-      sttStatus.textContent = "Audio heruntergeladen. Tipp: Strg+J oeffnet Downloads.";
+      sttStatus.textContent = "Audio wird vorbereitet...";
+      sttStatus.className = "status";
+
+      const prepared = await prepareAudioDownload(lastAudioBlob, lastAudioSourceName);
+      if (!prepared) {
+        sttStatus.textContent = "Konvertierung nicht moeglich. Bitte Originaldatei erneut hochladen.";
+        sttStatus.className = "status warn";
+        return;
+      }
+
+      const downloadFileName = buildAudioDownloadFileName(lastAudioSourceName, prepared.extension);
+      triggerDownload(prepared.blob, downloadFileName);
+      sttStatus.textContent = `Audio als ${prepared.formatLabel} heruntergeladen. Tipp: Strg+J oeffnet Downloads.`;
       sttStatus.className = "status ok";
     });
 
