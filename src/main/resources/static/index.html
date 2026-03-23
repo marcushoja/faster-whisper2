@@ -521,9 +521,35 @@
         });
         await navigator.clipboard.write([clipboardItem]);
         return { success: true };
-      } catch {
-        return { success: false, reason: "failed" };
+      } catch (error) {
+        return {
+          success: false,
+          reason: "failed",
+          errorName: error && error.name ? error.name : "UnknownError",
+          errorMessage: error && error.message ? error.message : "Unknown clipboard error"
+        };
       }
+    }
+
+    function logClipboardDiagnostics(blobOrFile, fileName) {
+      const sourceType = blobOrFile && blobOrFile.type ? blobOrFile.type : "(leer)";
+      const normalizedType = sourceType.startsWith("audio/") ? sourceType : "audio/webm";
+      const supportsClipboard = Boolean(navigator.clipboard && navigator.clipboard.write);
+      const supportsClipboardItem = typeof ClipboardItem !== "undefined";
+      const supportsMimeCheck = supportsClipboardItem && typeof ClipboardItem.supports === "function";
+      const supportsAudioMime = supportsMimeCheck ? ClipboardItem.supports(normalizedType) : "unbekannt";
+
+      console.log("[AudioClipboard] Diagnose", {
+        fileName: fileName || "audio.webm",
+        blobType: sourceType,
+        blobSize: blobOrFile ? blobOrFile.size : 0,
+        normalizedType,
+        isSecureContext,
+        visibilityState: document.visibilityState,
+        clipboardWriteAvailable: supportsClipboard,
+        clipboardItemAvailable: supportsClipboardItem,
+        clipboardItemSupportsType: supportsAudioMime
+      });
     }
 
     copyBtn.addEventListener("click", async () => {
@@ -562,18 +588,26 @@
         return;
       }
 
+      logClipboardDiagnostics(lastAudioBlob, lastAudioFileName);
       const copyResult = await copyAudioToClipboard(lastAudioBlob, lastAudioFileName);
       if (copyResult.success) {
+        console.log("[AudioClipboard] Kopieren erfolgreich.");
         sttStatus.textContent = "Audio in Zwischenablage kopiert (Zielprogramm muss Audio-Paste unterstuetzen).";
         sttStatus.className = "status ok";
         return;
       }
 
       if (copyResult.reason === "unsupported") {
+        console.warn("[AudioClipboard] Browser unterstuetzt Audio-Clipboard nicht.");
         sttStatus.textContent = "Audio-Zwischenablage wird von diesem Browser nicht unterstuetzt. Bitte Download nutzen.";
         sttStatus.className = "status warn";
         return;
       }
+
+      console.error("[AudioClipboard] Kopieren fehlgeschlagen.", {
+        errorName: copyResult.errorName || "UnknownError",
+        errorMessage: copyResult.errorMessage || "Unknown clipboard error"
+      });
 
       sttStatus.textContent = "Audio konnte nicht in die Zwischenablage kopiert werden. Bitte Download nutzen.";
       sttStatus.className = "status warn";
