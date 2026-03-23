@@ -153,6 +153,11 @@
       font-size: 14px;
     }
 
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
     button:focus:not(:focus-visible),
     input:focus:not(:focus-visible),
     textarea:focus:not(:focus-visible) {
@@ -281,6 +286,7 @@
       <textarea id="sttResult" placeholder="Transkription erscheint hier..."></textarea>
       <div class="field stt-bottom-actions">
         <button id="copyBtn" class="btn-secondary">Text kopieren</button>
+        <button id="copyAudioBtn" class="btn-secondary" disabled>Audio kopieren</button>
         <button id="downloadBtn" class="btn-secondary">Als Datei downloaden</button>
       </div>
     </section>
@@ -300,6 +306,7 @@
     const sttStatus = document.getElementById("sttStatus");
     const sttResult = document.getElementById("sttResult");
     const copyBtn = document.getElementById("copyBtn");
+    const copyAudioBtn = document.getElementById("copyAudioBtn");
     const downloadBtn = document.getElementById("downloadBtn");
 
     const recordBtn = document.getElementById("recordButton");
@@ -310,6 +317,18 @@
     let chunks = [];
     let audioStream;
     let wakeLock = null;
+    let lastAudioBlob = null;
+    let lastAudioFileName = "";
+
+    function updateAudioCopyButtonState() {
+      copyAudioBtn.disabled = !lastAudioBlob;
+    }
+
+    function rememberAudioForClipboard(blobOrFile, fileName) {
+      lastAudioBlob = blobOrFile;
+      lastAudioFileName = fileName || "audio.webm";
+      updateAudioCopyButtonState();
+    }
 
     async function requestScreenWakeLock() {
       if (!("wakeLock" in navigator)) {
@@ -479,6 +498,34 @@
       return { success: true, verified: fallbackVerified };
     }
 
+    async function copyAudioToClipboard(blobOrFile, fileName) {
+      if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === "undefined") {
+        return { success: false, reason: "unsupported" };
+      }
+
+      const sourceType = blobOrFile.type && blobOrFile.type.startsWith("audio/")
+        ? blobOrFile.type
+        : "audio/webm";
+      const normalizedBlob = blobOrFile.type === sourceType
+        ? blobOrFile
+        : blobOrFile.slice(0, blobOrFile.size, sourceType);
+      const audioFile = new File([normalizedBlob], fileName || "audio.webm", {
+        type: sourceType,
+        lastModified: Date.now()
+      });
+
+      try {
+        const clipboardItem = new ClipboardItem({
+          [sourceType]: audioFile,
+          "text/plain": new Blob([audioFile.name], { type: "text/plain" })
+        });
+        await navigator.clipboard.write([clipboardItem]);
+        return { success: true };
+      } catch {
+        return { success: false, reason: "failed" };
+      }
+    }
+
     copyBtn.addEventListener("click", async () => {
       const text = sttResult.value;
       if (!text) {
@@ -505,6 +552,30 @@
       }
 
       sttStatus.textContent = "Text kopiert. Vollstaendigkeit konnte nicht geprueft werden. Bei Problemen bitte Datei-Download nutzen.";
+      sttStatus.className = "status warn";
+    });
+
+    copyAudioBtn.addEventListener("click", async () => {
+      if (!lastAudioBlob) {
+        sttStatus.textContent = "Kein Audio verfuegbar. Bitte erst aufnehmen oder Datei hochladen.";
+        sttStatus.className = "status warn";
+        return;
+      }
+
+      const copyResult = await copyAudioToClipboard(lastAudioBlob, lastAudioFileName);
+      if (copyResult.success) {
+        sttStatus.textContent = "Audio in Zwischenablage kopiert (Zielprogramm muss Audio-Paste unterstuetzen).";
+        sttStatus.className = "status ok";
+        return;
+      }
+
+      if (copyResult.reason === "unsupported") {
+        sttStatus.textContent = "Audio-Zwischenablage wird von diesem Browser nicht unterstuetzt. Bitte Download nutzen.";
+        sttStatus.className = "status warn";
+        return;
+      }
+
+      sttStatus.textContent = "Audio konnte nicht in die Zwischenablage kopiert werden. Bitte Download nutzen.";
       sttStatus.className = "status warn";
     });
 
@@ -596,6 +667,8 @@
         return;
       }
 
+      rememberAudioForClipboard(blobOrFile, fileName);
+
       sttStatus.textContent = "Transkribiere...";
       sttStatus.className = "status";
 
@@ -628,6 +701,7 @@
     }
 
     requestScreenWakeLock();
+    updateAudioCopyButtonState();
     updateKeyState();
   </script>
 </body>
