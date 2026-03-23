@@ -286,8 +286,8 @@
       <textarea id="sttResult" placeholder="Transkription erscheint hier..."></textarea>
       <div class="field stt-bottom-actions">
         <button id="copyBtn" class="btn-secondary">Text kopieren</button>
-        <button id="copyAudioBtn" class="btn-secondary" disabled>Audio kopieren</button>
-        <button id="downloadBtn" class="btn-secondary">Als Datei downloaden</button>
+        <button id="downloadAudioBtn" class="btn-secondary" disabled>Als Audio downloaden</button>
+        <button id="downloadBtn" class="btn-secondary">Als TXT-Datei downloaden</button>
       </div>
     </section>
   </main>
@@ -306,7 +306,7 @@
     const sttStatus = document.getElementById("sttStatus");
     const sttResult = document.getElementById("sttResult");
     const copyBtn = document.getElementById("copyBtn");
-    const copyAudioBtn = document.getElementById("copyAudioBtn");
+    const downloadAudioBtn = document.getElementById("downloadAudioBtn");
     const downloadBtn = document.getElementById("downloadBtn");
 
     const recordBtn = document.getElementById("recordButton");
@@ -318,16 +318,16 @@
     let audioStream;
     let wakeLock = null;
     let lastAudioBlob = null;
-    let lastAudioFileName = "";
+    let lastAudioSourceName = "";
 
-    function updateAudioCopyButtonState() {
-      copyAudioBtn.disabled = !lastAudioBlob;
+    function updateAudioDownloadButtonState() {
+      downloadAudioBtn.disabled = !lastAudioBlob;
     }
 
-    function rememberAudioForClipboard(blobOrFile, fileName) {
+    function rememberAudioForDownload(blobOrFile, fileName) {
       lastAudioBlob = blobOrFile;
-      lastAudioFileName = fileName || "audio.webm";
-      updateAudioCopyButtonState();
+      lastAudioSourceName = fileName || "audio.webm";
+      updateAudioDownloadButtonState();
     }
 
     async function requestScreenWakeLock() {
@@ -498,241 +498,57 @@
       return { success: true, verified: fallbackVerified };
     }
 
-    function getClipboardMimeSupport(mimeType) {
-      if (typeof ClipboardItem === "undefined") {
-        return false;
-      }
-
-      if (typeof ClipboardItem.supports !== "function") {
-        return null;
-      }
-
-      try {
-        return ClipboardItem.supports(mimeType);
-      } catch {
-        return false;
-      }
+    function createTimestampPart() {
+      return new Date().toISOString().replace(/[:.]/g, "-");
     }
 
-    function withAudioExtension(fileName, mimeType) {
-      const extensionMap = {
+    function getAudioExtensionFromNameOrType(fileName, blobOrFile) {
+      if (fileName && fileName.includes(".")) {
+        return fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+      }
+
+      const extensionByMime = {
         "audio/mpeg": ".mp3",
         "audio/wav": ".wav",
         "audio/webm": ".webm",
-        "audio/ogg": ".ogg"
+        "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a"
       };
 
-      const fallbackName = fileName || "audio.webm";
-      const extension = extensionMap[mimeType] || ".bin";
-      const dotIndex = fallbackName.lastIndexOf(".");
-      if (dotIndex <= 0) {
-        return `${fallbackName}${extension}`;
-      }
-
-      return `${fallbackName.slice(0, dotIndex)}${extension}`;
+      return extensionByMime[blobOrFile.type] || ".webm";
     }
 
-    function audioBufferToWavBlob(audioBuffer) {
-      const numChannels = audioBuffer.numberOfChannels;
-      const sampleRate = audioBuffer.sampleRate;
-      const length = audioBuffer.length;
-      const bytesPerSample = 2;
-      const blockAlign = numChannels * bytesPerSample;
-      const dataSize = length * blockAlign;
-      const buffer = new ArrayBuffer(44 + dataSize);
-      const view = new DataView(buffer);
-
-      function writeAscii(offset, value) {
-        for (let i = 0; i < value.length; i += 1) {
-          view.setUint8(offset + i, value.charCodeAt(i));
-        }
-      }
-
-      writeAscii(0, "RIFF");
-      view.setUint32(4, 36 + dataSize, true);
-      writeAscii(8, "WAVE");
-      writeAscii(12, "fmt ");
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, numChannels, true);
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * blockAlign, true);
-      view.setUint16(32, blockAlign, true);
-      view.setUint16(34, bytesPerSample * 8, true);
-      writeAscii(36, "data");
-      view.setUint32(40, dataSize, true);
-
-      const channelData = [];
-      for (let channel = 0; channel < numChannels; channel += 1) {
-        channelData.push(audioBuffer.getChannelData(channel));
-      }
-
-      let offset = 44;
-      for (let i = 0; i < length; i += 1) {
-        for (let channel = 0; channel < numChannels; channel += 1) {
-          const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
-          const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-          view.setInt16(offset, intSample, true);
-          offset += bytesPerSample;
-        }
-      }
-
-      return new Blob([buffer], { type: "audio/wav" });
+    function sanitizeFileBaseName(name) {
+      return (name || "audio")
+        .trim()
+        .replace(/\.[^.]+$/, "")
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase() || "audio";
     }
 
-    async function convertAudioBlobToWav(blobOrFile) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) {
-        return null;
+    function buildAudioDownloadFileName(fileName, blobOrFile) {
+      const timestamp = createTimestampPart();
+      const extension = getAudioExtensionFromNameOrType(fileName, blobOrFile);
+      const baseName = sanitizeFileBaseName(fileName || "audio");
+
+      if (baseName === "recording" || baseName === "aufnahme") {
+        return `aufnahme-${timestamp}${extension}`;
       }
 
-      const audioContext = new AudioContextClass();
-      try {
-        const arrayBuffer = await blobOrFile.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        return audioBufferToWavBlob(audioBuffer);
-      } catch {
-        return null;
-      } finally {
-        await audioContext.close();
-      }
+      return `${baseName}-${timestamp}${extension}`;
     }
 
-    async function buildClipboardAudioPayloads(blobOrFile, fileName) {
-      const sourceType = blobOrFile.type && blobOrFile.type.startsWith("audio/")
-        ? blobOrFile.type
-        : "audio/webm";
-      const normalizedBlob = blobOrFile.type === sourceType
-        ? blobOrFile
-        : blobOrFile.slice(0, blobOrFile.size, sourceType);
-      const payloads = [];
-
-      function addPayload(mimeType, payloadBlob, conversion) {
-        if (payloads.some((item) => item.mimeType === mimeType)) {
-          return;
-        }
-
-        payloads.push({
-          blob: payloadBlob,
-          mimeType,
-          fileName: withAudioExtension(fileName, mimeType),
-          conversion
-        });
-      }
-
-      const mpegSupport = getClipboardMimeSupport("audio/mpeg");
-      if (sourceType === "audio/mpeg" && mpegSupport !== false) {
-        addPayload("audio/mpeg", normalizedBlob, "none");
-      }
-
-      const wavSupport = getClipboardMimeSupport("audio/wav");
-      if (wavSupport !== false) {
-        const wavBlob = await convertAudioBlobToWav(normalizedBlob);
-        if (wavBlob) {
-          addPayload(
-            "audio/wav",
-            wavBlob,
-            sourceType === "audio/wav" ? "none" : `converted:${sourceType}->audio/wav`
-          );
-        }
-      }
-
-      const sourceSupport = getClipboardMimeSupport(sourceType);
-      if (sourceSupport !== false) {
-        addPayload(sourceType, normalizedBlob, "none");
-      }
-
-      return {
-        payloads,
-        sourceType,
-        supports: {
-          mpeg: mpegSupport,
-          wav: wavSupport,
-          source: sourceSupport
-        }
-      };
-    }
-
-    async function copyAudioToClipboard(blobOrFile, fileName) {
-      if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === "undefined") {
-        return { success: false, reason: "unsupported" };
-      }
-
-      const payloadResult = await buildClipboardAudioPayloads(blobOrFile, fileName);
-      if (!payloadResult.payloads.length) {
-        return {
-          success: false,
-          reason: "unsupported-type",
-          sourceType: payloadResult.sourceType,
-          supports: payloadResult.supports
-        };
-      }
-
-      const attempts = [];
-      for (const payload of payloadResult.payloads) {
-        const audioFile = new File([payload.blob], payload.fileName, {
-          type: payload.mimeType,
-          lastModified: Date.now()
-        });
-
-        try {
-          const clipboardItem = new ClipboardItem({
-            [payload.mimeType]: audioFile,
-            "text/plain": new Blob([audioFile.name], { type: "text/plain" })
-          });
-          await navigator.clipboard.write([clipboardItem]);
-          return {
-            success: true,
-            mimeType: payload.mimeType,
-            fileName: audioFile.name,
-            conversion: payload.conversion
-          };
-        } catch (error) {
-          attempts.push({
-            mimeType: payload.mimeType,
-            errorName: error && error.name ? error.name : "UnknownError",
-            errorMessage: error && error.message ? error.message : "Unknown clipboard error"
-          });
-        }
-      }
-
-      const lastAttempt = attempts[attempts.length - 1] || {
-        errorName: "UnknownError",
-        errorMessage: "Unknown clipboard error"
-      };
-
-      return {
-        success: false,
-        reason: "failed",
-        attempts,
-        errorName: lastAttempt.errorName,
-        errorMessage: lastAttempt.errorMessage
-      };
-    }
-
-    function logClipboardDiagnostics(blobOrFile, fileName) {
-      const sourceType = blobOrFile && blobOrFile.type ? blobOrFile.type : "(leer)";
-      const normalizedType = sourceType.startsWith("audio/") ? sourceType : "audio/webm";
-      const supportsClipboard = Boolean(navigator.clipboard && navigator.clipboard.write);
-      const supportsClipboardItem = typeof ClipboardItem !== "undefined";
-      const supportsAudioMime = getClipboardMimeSupport(normalizedType);
-      const supportsWav = getClipboardMimeSupport("audio/wav");
-      const supportsMpeg = getClipboardMimeSupport("audio/mpeg");
-
-      console.log("[AudioClipboard] Diagnose", {
-        fileName: fileName || "audio.webm",
-        blobType: sourceType,
-        blobSize: blobOrFile ? blobOrFile.size : 0,
-        normalizedType,
-        preferredType: "audio/mpeg",
-        isSecureContext,
-        visibilityState: document.visibilityState,
-        clipboardWriteAvailable: supportsClipboard,
-        clipboardItemAvailable: supportsClipboardItem,
-        clipboardItemSupportsType: supportsAudioMime,
-        clipboardItemSupportsWav: supportsWav,
-        clipboardItemSupportsMpeg: supportsMpeg
-      });
+    function triggerDownload(blob, fileName) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     }
 
     copyBtn.addEventListener("click", async () => {
@@ -755,60 +571,26 @@
       }
 
       if (copyResult.verified === false) {
-        sttStatus.textContent = "Warnung: Zwischenablage wirkt gekuerzt. Bitte 'Als Datei downloaden' nutzen.";
+        sttStatus.textContent = "Warnung: Zwischenablage wirkt gekuerzt. Bitte 'Als TXT-Datei downloaden' nutzen.";
         sttStatus.className = "status warn";
         return;
       }
 
-      sttStatus.textContent = "Text kopiert. Vollstaendigkeit konnte nicht geprueft werden. Bei Problemen bitte Datei-Download nutzen.";
+      sttStatus.textContent = "Text kopiert. Vollstaendigkeit konnte nicht geprueft werden. Bei Problemen bitte TXT-Download nutzen.";
       sttStatus.className = "status warn";
     });
 
-    copyAudioBtn.addEventListener("click", async () => {
+    downloadAudioBtn.addEventListener("click", () => {
       if (!lastAudioBlob) {
         sttStatus.textContent = "Kein Audio verfuegbar. Bitte erst aufnehmen oder Datei hochladen.";
         sttStatus.className = "status warn";
         return;
       }
 
-      logClipboardDiagnostics(lastAudioBlob, lastAudioFileName);
-      const copyResult = await copyAudioToClipboard(lastAudioBlob, lastAudioFileName);
-      if (copyResult.success) {
-        console.log("[AudioClipboard] Kopieren erfolgreich.", {
-          mimeType: copyResult.mimeType,
-          fileName: copyResult.fileName,
-          conversion: copyResult.conversion
-        });
-        sttStatus.textContent = `Audio in Zwischenablage kopiert (${copyResult.mimeType}). Zielprogramm muss Audio-Paste unterstuetzen.`;
-        sttStatus.className = "status ok";
-        return;
-      }
-
-      if (copyResult.reason === "unsupported") {
-        console.warn("[AudioClipboard] Browser unterstuetzt Audio-Clipboard nicht.");
-        sttStatus.textContent = "Audio-Zwischenablage wird von diesem Browser nicht unterstuetzt. Bitte Download nutzen.";
-        sttStatus.className = "status warn";
-        return;
-      }
-
-      if (copyResult.reason === "unsupported-type") {
-        console.warn("[AudioClipboard] Kein kompatibler Audio-MIME-Typ verfuegbar.", {
-          sourceType: copyResult.sourceType,
-          supports: copyResult.supports
-        });
-        sttStatus.textContent = "Browser blockiert Audio-Formate fuer Clipboard. Bitte Download nutzen.";
-        sttStatus.className = "status warn";
-        return;
-      }
-
-      console.error("[AudioClipboard] Kopieren fehlgeschlagen.", {
-        errorName: copyResult.errorName || "UnknownError",
-        errorMessage: copyResult.errorMessage || "Unknown clipboard error",
-        attempts: copyResult.attempts || []
-      });
-
-      sttStatus.textContent = "Audio konnte nicht in die Zwischenablage kopiert werden. Bitte Download nutzen.";
-      sttStatus.className = "status warn";
+      const downloadFileName = buildAudioDownloadFileName(lastAudioSourceName, lastAudioBlob);
+      triggerDownload(lastAudioBlob, downloadFileName);
+      sttStatus.textContent = "Audio heruntergeladen. Tipp: Strg+J oeffnet Downloads.";
+      sttStatus.className = "status ok";
     });
 
     downloadBtn.addEventListener("click", () => {
@@ -818,18 +600,9 @@
       }
 
       const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-
-      link.href = url;
-      link.download = `transkription-${timestamp}.txt`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      URL.revokeObjectURL(url);
-      sttStatus.textContent = "Textdatei heruntergeladen.";
+      const timestamp = createTimestampPart();
+      triggerDownload(blob, `transkription-${timestamp}.txt`);
+      sttStatus.textContent = "TXT-Datei heruntergeladen.";
       sttStatus.className = "status ok";
     });
 
@@ -899,7 +672,7 @@
         return;
       }
 
-      rememberAudioForClipboard(blobOrFile, fileName);
+      rememberAudioForDownload(blobOrFile, fileName);
 
       sttStatus.textContent = "Transkribiere...";
       sttStatus.className = "status";
@@ -933,7 +706,7 @@
     }
 
     requestScreenWakeLock();
-    updateAudioCopyButtonState();
+    updateAudioDownloadButtonState();
     updateKeyState();
   </script>
 </body>
